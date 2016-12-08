@@ -1,0 +1,242 @@
+--- 
+title:  "Case_Study_2"
+author: "Jim Brittain, Vivek Bejugama, Brandon Lawrence"
+date:   "December 8, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Q1}
+X = matrix(c(4,5,1,2,1,0,3,5,2,1,8,2),  
+           nrow=3,                      
+           ncol=4,                      
+           byrow=TRUE                  # fill matrix by rows
+          )   
+X
+```
+
+```{r Q2}
+#Libraries
+#install.packages("tseries")
+library(tseries)
+
+#Download Stock Data for 'AGIO'
+SNPdata <- get.hist.quote('agio',quote="Close")
+length(SNPdata)
+head(SNPdata)
+
+#Create Log Returns
+SNPret <- log(lag(SNPdata)) - log(SNPdata)
+length(SNPret)
+head(SNPret)
+
+#Calculate Volatility of the complete dataset 
+SNPvol <- sd(SNPret) * sqrt(250) * 100
+SNPvol
+
+## Create volatility Look back window function
+Vol <- function(d, logrets){
+	var = 0
+	lam = 0
+	varlist <- c()
+	for (r in logrets) {
+		lam = lam*(1 - 1/d) + 1
+ 	  var = (1 - 1/lam)*var + (1/lam)*r^2
+		varlist <- c(varlist, var)
+	}
+	sqrt(varlist)
+}
+
+# Volatility estimate over entire time with different decay factors(weights).
+volest  <- Vol( 10,SNPret)
+volest2 <- Vol( 30,SNPret)
+volest3 <- Vol(100,SNPret)
+
+# Plot the results with different decays. 
+plot(volest,type="l",
+     main = "Volatility Estimate over Time",
+     xlab = 'Time',
+     ylab = 'Volatility Estimate')
+lines(volest2,type="l",col="red")
+lines(volest3, type = "l", col="blue")
+```
+
+```{r Q3}
+#Libraries
+library(plyr)
+library(ggplot2)
+
+#Load Orange Data (included with R)
+data("Orange")
+head (Orange)
+
+#a,
+summOrange <- ddply(Orange, .(Tree), summarize,  
+      Mean_Circ  =mean(circumference),
+      Median_Circ=median(circumference)
+     )
+summOrange
+
+#b.
+ggplot(Orange, aes(x=Orange$age, y=Orange$circumference)) + 
+  geom_point(aes(shape=Tree, color=Tree)) +
+  scale_x_discrete(name="Age of the Tree (days)",limits=c(118,484,664,1004,1231,1372,1582)) +
+  scale_y_continuous(name="Circumference at breast height(mm)")
+
+#c.
+ggplot(Orange, aes(x = Orange$Tree, y = Orange$circumference)) + 
+  geom_boxplot(aes(group=Tree, color=Tree)) + 
+  scale_x_discrete(name="Tree") + 
+  scale_y_continuous(name="Circumference at breast height(mm)")
+```
+
+```{r Q4}
+#Libraries
+#install.packages("DataCombine")
+#install.packages("RCurl")
+library(DataCombine)
+library(RCurl)
+
+
+#Import Temp Data from GitHub
+
+x <- getURL("https://raw.githubusercontent.com/blawrenceDS/CaseStudy02/master/TEMP.csv")
+raw_temp_data <- read.csv(text = x, header = TRUE)
+
+
+#Import records with '/', which are post 1990 data.
+Temp_data <- raw_temp_data[grep("/",raw_temp_data$Date),]
+
+#Assign Field names
+names(Temp_data) <- c("Date", "Monthly_Avg_Temp", "Uncertainty", "Country" )
+
+#Convert Country and date to Character and date
+Temp_data$Country <- as.character(Temp_data$Country)
+Temp_data$Date    <- as.Date(Temp_data$Date, "%m/%d/%Y")
+
+#Remove entries with no temp readings.
+Temp_data <- Temp_data[!is.na(Temp_data$Monthly_Avg_Temp),]
+
+## Part i
+# Generating a dataset with max and min temp for each country over years.
+min_max_data <- merge(
+  x = aggregate(Temp_data$Monthly_Avg_Temp, by = list(Temp_data$Country), max),
+  y = aggregate(Temp_data$Monthly_Avg_Temp, by = list(Temp_data$Country), min),
+  by = "Group.1")
+names(min_max_data) <- c("Country", "Max_Temp", "Min_Temp")
+
+# Derieve the max-min temp field. 
+min_max_data$Diff_Temp <- min_max_data$Max_Temp - min_max_data$Min_Temp
+
+# Report top 20 countries with max difference b/w max and min temp.
+head(min_max_data[order(-min_max_data$Diff_Temp),],20)
+
+#Visualize top 20
+top20 <- head(min_max_data[order(-min_max_data$Diff_Temp),],20)
+
+ggplot(data=top20, aes(x=Country, y=Diff_Temp, fill=Country)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle = -45, hjust = 0))
+
+
+## Part ii
+#Subset only United States records
+UStemp <- Temp_data[Temp_data$Country == "United States",]
+
+# a. Centigrade to Fahrenheit conversion
+UStemp$F_Temp <- (UStemp$Monthly_Avg_Temp*(9/5)) + 32
+head(UStemp)
+
+# b. Derive the Year
+UStemp$Year <- strftime(UStemp$Date, "%Y")
+UStemp$Year <- as.numeric(UStemp$Year)
+head(UStemp)
+
+# Aggregat the average temp per year 
+year_avg_temp <- ddply(UStemp, .(Year), summarize,  Mean_F_Temp=mean(F_Temp))
+head (year_avg_temp)
+
+# Plot the result
+plot(year_avg_temp,
+     main = 'Average annual Temperatures in United States',
+     xlab = 'Year',
+     ylab = 'Mean Temperature(F)')
+# Add fit lines
+ abline(lm(year_avg_temp$Mean_F_Temp ~ year_avg_temp$Year), col="red") # regression line (y~x) 
+ lines(lowess(year_avg_temp$Year , year_avg_temp$Mean_F_Temp), col="blue") # lowess line (x,y) 
+
+# c. Derieve change in annual average temp from previous year.
+# Sort by Year to new data frame
+comp_years <- year_avg_temp[order(year_avg_temp$Year),] 
+comp_years <- slide(comp_years, Var="Year"       , slideBy=-1)  
+comp_years <- slide(comp_years, Var="Mean_F_Temp", slideBy=-1)  
+
+# Rename lag vars
+comp_years <- rename(comp_years, c("Year-1"="Prev_Year", "Mean_F_Temp-1"="Prev_F_Temp"))
+
+# Calculate difference between current and prev year avg. temp
+# Requesting the Max Difference so get absolute value of difference
+comp_years$F_Temp_diff <- abs(comp_years$Mean_F_Temp - comp_years$Prev_F_Temp) 
+
+# Year with max Change in temp. (Drop record with NA due to missing value for lag)
+comp_years <- comp_years[!is.na(comp_years$F_Temp_diff),]
+comp_years <- comp_years[order(comp_years$F_Temp_diff),] 
+tail(comp_years,1)
+
+
+## Part iii
+#Import CityTemp Data from GitHub
+
+x2 <- getURL("https://raw.githubusercontent.com/blawrenceDS/CaseStudy02/master/CityTemp.csv")
+raw_city_temp_data <- read.csv(text = x2, header = TRUE)
+
+#Import records with '/', which get us only post 1990 data.
+city_Temp_data <- raw_city_temp_data[grep("/",raw_city_temp_data$Date),]
+
+#Assign Field names
+names(city_Temp_data) <- c("Date", "Monthly_Avg_Temp", 
+                           "Uncertainty","City","Country","Latitude","Longitude" )
+
+# Data Conversions
+city_Temp_data$Country <- as.character(city_Temp_data$Country)
+city_Temp_data$City    <- as.character(city_Temp_data$City)
+city_Temp_data$Date    <- as.Date(city_Temp_data$Date, "%m/%d/%Y")
+head(city_Temp_data)
+
+# Remove latitude and longitude fields since not needed
+city_Temp_data <- city_Temp_data[,c("Date", "Monthly_Avg_Temp", "Uncertainty","City","Country")]
+
+# Remove entries with no temp recordings
+city_Temp_data <- city_Temp_data[!is.na(city_Temp_data$Monthly_Avg_Temp),]
+
+# Convert to Fahrenheit to compare to USA dataset
+city_Temp_data$Monthly_Avg_F_Temp <- (city_Temp_data$Monthly_Avg_Temp*(9/5)) + 32
+
+# Generate a dataset with max and min temp for each City and country over years
+city_min_max_data <- merge(
+  x = aggregate(city_Temp_data$Monthly_Avg_F_Temp,
+    by = list(city_Temp_data$City,city_Temp_data$Country), max),
+  y = aggregate(city_Temp_data$Monthly_Avg_F_Temp,
+    by = list(city_Temp_data$City,city_Temp_data$Country), min),
+    by = c("Group.1","Group.2"))
+names(city_min_max_data) <- c("City", "Country", "Max_F_Temp", "Min_F_Temp")
+head(city_min_max_data)
+
+# Derieve the max-min temp field for each city
+# Requesting the Max Difference so get absolute value of difference
+city_min_max_data$Diff_Temp <- abs(city_min_max_data$Max_F_Temp - city_min_max_data$Min_F_Temp)
+
+# Top 20 Cities with highest difference in max and min temp.
+head(city_min_max_data[order(-city_min_max_data$Diff_Temp),],20)
+
+#Visualize top 20 Cities
+top20cities <- head(city_min_max_data[order(-city_min_max_data$Diff_Temp),],20)
+
+ggplot(data=top20cities, aes(x=City, y=Diff_Temp, fill=City)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle = -45, hjust = 0))
+```
